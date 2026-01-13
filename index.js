@@ -11,7 +11,7 @@ async function getTenantAccessToken() {
   }
 
   const res = await fetch(
-    "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal/",
+    "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -39,32 +39,35 @@ async function callOpenRouter(prompt) {
     return "Server missing OpenRouter API key";
   }
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      "HTTP-Referer": "https://railway.app",
-      "X-Title": "Lark Bot AI"
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.0-flash-exp:free",
-      messages: [{ role: "user", content: prompt }]
-    })
-  });
+  const response = await fetch(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "HTTP-Referer": "https://railway.app",
+        "X-Title": "Lark Bot AI"
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.0-flash-exp:free",
+        messages: [{ role: "user", content: prompt }]
+      })
+    }
+  );
 
   const data = await response.json();
   console.log("AI response:", data);
 
-  return data?.choices?.[0]?.message?.content ?? "AI không trả lời";
+  return data?.choices?.[0]?.message?.content ?? "AI không trả lời 😢";
 }
 
 // ===== REPLY BACK TO LARK =====
-async function replyToLark(openMessageId, text) {
+async function replyToLark(messageId, text) {
   const token = await getTenantAccessToken();
 
   await fetch(
-    `https://open.larksuite.com/open-apis/im/v1/messages/${openMessageId}/reply`,
+    `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reply`,
     {
       method: "POST",
       headers: {
@@ -82,8 +85,9 @@ async function replyToLark(openMessageId, text) {
 // ===== WEBHOOK =====
 app.post("/lark/webhook", async (req, res) => {
 
-  console.log("Webhook received:", req.body);
+  console.log("Webhook received:", JSON.stringify(req.body, null, 2));
 
+  // challenge verify
   if (req.body?.challenge) {
     return res.status(200).json({ challenge: req.body.challenge });
   }
@@ -91,14 +95,23 @@ app.post("/lark/webhook", async (req, res) => {
   const event = req.body?.event;
   if (!event) return res.status(200).json({ code: 0 });
 
-  const msgId = event.open_message_id;
-  let userText = event.text_without_at_bot?.trim() || "";
+  // correct message id path
+  const msgId = event?.message?.message_id;
 
-  console.log("User text:", userText);
+  // parse message content
+  let text = "";
+  try {
+    text = JSON.parse(event?.message?.content || "{}").text || "";
+  } catch (e) {}
 
-  const aiReply = await callOpenRouter(userText || "Xin chào 👋");
+  // remove bot mention
+  text = text.replace(/@_user_\d+/g, "").trim();
 
-  await replyToLark(msgId, aiReply);
+  console.log("User text:", text);
+
+  const reply = await callOpenRouter(text || "Xin chào 👋");
+
+  await replyToLark(msgId, reply);
 
   res.status(200).json({ code: 0 });
 });
