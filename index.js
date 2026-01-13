@@ -50,7 +50,7 @@ async function callOpenRouter(prompt) {
         "X-Title": "Lark Bot AI"
       },
       body: JSON.stringify({
-        model: "google/gemini-2.0-flash-exp:free",
+        model: "allenai/molmo-2-8b:free",
         messages: [{ role: "user", content: prompt }]
       })
     }
