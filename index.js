@@ -3,8 +3,13 @@ import express from "express";
 const app = express();
 app.use(express.json());
 
-// ====== LARK AUTH: lấy tenant_access_token ======
+// ===== GET TENANT ACCESS TOKEN =====
 async function getTenantAccessToken() {
+
+  if (!process.env.LARK_APP_ID || !process.env.LARK_APP_SECRET) {
+    console.error("❌ Missing LARK_APP_ID or LARK_APP_SECRET");
+  }
+
   const res = await fetch(
     "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal/",
     {
@@ -18,22 +23,29 @@ async function getTenantAccessToken() {
   );
 
   const data = await res.json();
-  console.log("tenant_access_token:", data);
+  console.log("tenant token response:", data);
+
+  if (data.code !== 0) {
+    throw new Error("Failed to get tenant_access_token: " + data.msg);
+  }
 
   return data.tenant_access_token;
 }
 
-// ====== OPENROUTER AI CALL ======
+// ===== CALL OPENROUTER =====
 async function callOpenRouter(prompt) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+
+  if (!process.env.OPENROUTER_API_KEY) {
+    return "Server missing OpenRouter API key";
+  }
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
+      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
       "HTTP-Referer": "https://railway.app",
-      "X-Title": "Lark Bot"
+      "X-Title": "Lark Bot AI"
     },
     body: JSON.stringify({
       model: "google/gemini-2.0-flash-exp:free",
@@ -47,12 +59,12 @@ async function callOpenRouter(prompt) {
   return data?.choices?.[0]?.message?.content ?? "AI không trả lời";
 }
 
-// ====== GỬI TIN NHẮN NGƯỢC VỀ LARK ======
-async function replyToLark(messageId, text) {
+// ===== REPLY BACK TO LARK =====
+async function replyToLark(openMessageId, text) {
   const token = await getTenantAccessToken();
 
   await fetch(
-    `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reply`,
+    `https://open.larksuite.com/open-apis/im/v1/messages/${openMessageId}/reply`,
     {
       method: "POST",
       headers: {
@@ -67,49 +79,30 @@ async function replyToLark(messageId, text) {
   );
 }
 
-// ====== HEALTH CHECK ======
-app.get("/", (req, res) => {
-  res.send("Lark bot webhook is running 🚀");
-});
-
-// ====== WEBHOOK ======
+// ===== WEBHOOK =====
 app.post("/lark/webhook", async (req, res) => {
-  const body = req.body;
-  console.log("Webhook received:", body);
 
-  // 1) Challenge verification
-  if (body?.challenge) {
-    res.setHeader("Content-Type", "application/json");
-    return res.status(200).send(
-      JSON.stringify({ challenge: body.challenge })
-    );
+  console.log("Webhook received:", req.body);
+
+  if (req.body?.challenge) {
+    return res.status(200).json({ challenge: req.body.challenge });
   }
 
-  // 2) Event message
-  if (body?.event?.message?.message_id) {
-    const messageId = body.event.message.message_id;
-    let userContent = body.event.message.content;
+  const event = req.body?.event;
+  if (!event) return res.status(200).json({ code: 0 });
 
-    // Parse nội dung text
-    try {
-      const parsed = JSON.parse(userContent);
-      userContent = parsed.text || userContent;
-    } catch (_) {}
+  const msgId = event.open_message_id;
+  let userText = event.text_without_at_bot?.trim() || "";
 
-    console.log("User text:", userContent);
+  console.log("User text:", userText);
 
-    // AI trả lời
-    const aiReply = await callOpenRouter(userContent);
+  const aiReply = await callOpenRouter(userText || "Xin chào 👋");
 
-    // Gửi trả lời về Lark
-    await replyToLark(messageId, aiReply);
-  }
+  await replyToLark(msgId, aiReply);
 
-  return res.status(200).json({ code: 0 });
+  res.status(200).json({ code: 0 });
 });
 
-// ====== SERVER ======
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(process.env.PORT || 3000, () =>
+  console.log("Server running")
+);
