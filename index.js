@@ -1,16 +1,13 @@
 import express from "express";
 
 const app = express();
-
-// 🔥 BẮT BUỘC: parse JSON cho Lark challenge
 app.use(express.json());
-
-// ==================== UTILS ====================
 
 // ===== GET TENANT ACCESS TOKEN =====
 async function getTenantAccessToken() {
+
   if (!process.env.LARK_APP_ID || !process.env.LARK_APP_SECRET) {
-    throw new Error("❌ Missing LARK_APP_ID or LARK_APP_SECRET");
+    console.error("❌ Missing LARK_APP_ID or LARK_APP_SECRET");
   }
 
   const res = await fetch(
@@ -37,8 +34,9 @@ async function getTenantAccessToken() {
 
 // ===== CALL OPENROUTER =====
 async function callOpenRouter(prompt) {
+
   if (!process.env.OPENROUTER_API_KEY) {
-    return "❌ Server missing OpenRouter API key";
+    return "Server missing OpenRouter API key";
   }
 
   const response = await fetch(
@@ -61,14 +59,14 @@ async function callOpenRouter(prompt) {
   const data = await response.json();
   console.log("AI response:", data);
 
-  return data?.choices?.[0]?.message?.content || "AI không trả lời 😢";
+  return data?.choices?.[0]?.message?.content ?? "AI không trả lời 😢";
 }
 
 // ===== REPLY BACK TO LARK =====
 async function replyToLark(messageId, text) {
   const token = await getTenantAccessToken();
 
-  const res = await fetch(
+  await fetch(
     `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reply`,
     {
       method: "POST",
@@ -82,56 +80,42 @@ async function replyToLark(messageId, text) {
       })
     }
   );
-
-  const data = await res.json();
-  console.log("Reply Lark result:", data);
 }
 
-// ==================== WEBHOOK ====================
-
-// LOG MỌI REQUEST ĐI VÀO (kể cả sai route)
-app.use((req, res, next) => {
-  console.log("\n==============================");
-  console.log("➡️ Incoming request");
-  console.log("Method:", req.method);
-  console.log("URL:", req.url);
-  console.log("Headers:", req.headers);
-  next();
-});
-
-// Parse JSON (Lark challenge là JSON)
-app.use(express.json());
-
-// LOG BODY SAU KHI PARSE
-app.use((req, res, next) => {
-  console.log("📦 Parsed body:", req.body);
-  next();
-});
-
+// ===== WEBHOOK =====
 app.post("/lark/webhook", async (req, res) => {
-  console.log("🔥 HIT /lark/webhook");
 
-  // 1️⃣ Verify challenge
+  console.log("Webhook received:", JSON.stringify(req.body, null, 2));
+
+  // challenge verify
   if (req.body?.challenge) {
-    console.log("✅ Challenge received:", req.body.challenge);
-    console.log("↩️ Responding challenge...");
     return res.status(200).json({ challenge: req.body.challenge });
   }
 
-  console.log("❌ No challenge found in body!");
-  console.log("Body keys:", Object.keys(req.body || {}));
+  const event = req.body?.event;
+  if (!event) return res.status(200).json({ code: 0 });
 
-  return res.status(200).json({ code: 0 });
+  // correct message id path
+  const msgId = event?.message?.message_id;
+
+  // parse message content
+  let text = "";
+  try {
+    text = JSON.parse(event?.message?.content || "{}").text || "";
+  } catch (e) {}
+
+  // remove bot mention
+  text = text.replace(/@_user_\d+/g, "").trim();
+
+  console.log("User text:", text);
+
+  const reply = await callOpenRouter(text || "Xin chào 👋");
+
+  await replyToLark(msgId, reply);
+
+  res.status(200).json({ code: 0 });
 });
 
-// Bắt tất cả route khác để biết Lark có gọi nhầm URL không
-app.all("*", (req, res) => {
-  console.log("❌ HIT WRONG ROUTE:", req.method, req.url);
-  return res.status(404).send("Not Found");
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running at :${PORT}`);
-});
-
+app.listen(process.env.PORT || 3000, () =>
+  console.log("Server running")
+);
