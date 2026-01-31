@@ -2,11 +2,15 @@ import express from "express";
 
 const app = express();
 
+// 🔥 BẮT BUỘC: parse JSON cho Lark challenge
+app.use(express.json());
+
+// ==================== UTILS ====================
+
 // ===== GET TENANT ACCESS TOKEN =====
 async function getTenantAccessToken() {
-
   if (!process.env.LARK_APP_ID || !process.env.LARK_APP_SECRET) {
-    console.error("❌ Missing LARK_APP_ID or LARK_APP_SECRET");
+    throw new Error("❌ Missing LARK_APP_ID or LARK_APP_SECRET");
   }
 
   const res = await fetch(
@@ -33,9 +37,8 @@ async function getTenantAccessToken() {
 
 // ===== CALL OPENROUTER =====
 async function callOpenRouter(prompt) {
-
   if (!process.env.OPENROUTER_API_KEY) {
-    return "Server missing OpenRouter API key";
+    return "❌ Server missing OpenRouter API key";
   }
 
   const response = await fetch(
@@ -58,14 +61,14 @@ async function callOpenRouter(prompt) {
   const data = await response.json();
   console.log("AI response:", data);
 
-  return data?.choices?.[0]?.message?.content ?? "AI không trả lời 😢";
+  return data?.choices?.[0]?.message?.content || "AI không trả lời 😢";
 }
 
 // ===== REPLY BACK TO LARK =====
 async function replyToLark(messageId, text) {
   const token = await getTenantAccessToken();
 
-  await fetch(
+  const res = await fetch(
     `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reply`,
     {
       method: "POST",
@@ -79,23 +82,25 @@ async function replyToLark(messageId, text) {
       })
     }
   );
+
+  const data = await res.json();
+  console.log("Reply Lark result:", data);
 }
 
-
-// Parse JSON + RAW để không bị mất challenge
-app.use(express.json({ type: "*/*" }));
+// ==================== WEBHOOK ====================
 
 app.post("/lark/webhook", async (req, res) => {
-  console.log("Webhook raw body:", req.body);
+  console.log("=== LARK WEBHOOK HIT ===");
+  console.log("Headers:", req.headers);
+  console.log("Body:", req.body);
 
-  // 1. Verify challenge (BẮT BUỘC)
+  // 1️⃣ VERIFY CHALLENGE (bắt buộc – trả NGAY)
   if (req.body?.challenge) {
-    console.log("Challenge received:", req.body.challenge);
-    return res.status(200).json({
-      challenge: req.body.challenge
-    });
+    console.log("✅ Challenge received:", req.body.challenge);
+    return res.status(200).json({ challenge: req.body.challenge });
   }
 
+  // 2️⃣ EVENT MESSAGE
   const event = req.body?.event;
   if (!event?.message) {
     return res.status(200).json({ code: 0 });
@@ -103,18 +108,18 @@ app.post("/lark/webhook", async (req, res) => {
 
   const msgId = event.message.message_id;
 
-  // 2. Parse text user gửi
+  // 3️⃣ Parse text
   let text = "";
   try {
     text = JSON.parse(event.message.content || "{}").text || "";
   } catch (e) {
-    console.log("Parse content error:", e.message);
+    console.error("Parse content error:", e.message);
   }
 
   text = text.replace(/@_user_\d+/g, "").trim();
   console.log("User text:", text);
 
-  // 3. Gọi AI
+  // 4️⃣ Gọi AI
   let reply = "Xin chào 👋";
   try {
     reply = await callOpenRouter(text || "Xin chào");
@@ -123,15 +128,19 @@ app.post("/lark/webhook", async (req, res) => {
     reply = "❌ AI đang lỗi, thử lại sau.";
   }
 
-  // 4. Trả lời lại Lark
+  // 5️⃣ Reply về Lark
   try {
     await replyToLark(msgId, reply);
   } catch (e) {
-    console.error("Reply Lark error:", e.response?.data || e.message);
+    console.error("Reply Lark error:", e.message);
   }
 
   return res.status(200).json({ code: 0 });
 });
 
-app.listen(3000, () => console.log("Server running at :3000"));
+// ==================== START SERVER ====================
 
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running at :${PORT}`);
+});
