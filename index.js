@@ -83,8 +83,6 @@ async function replyToLark(messageId, text) {
 }
 
 
-const app = express();
-
 // BẮT BUỘC
 app.use(express.json());
 
